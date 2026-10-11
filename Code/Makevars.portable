@@ -1,0 +1,10 @@
+# Portable codegen for user-library R packages on a heterogeneous cluster.
+# `general` mixes epyc3 (Zen 3, no AVX-512), epyc4 (Zen 4) and epyc5 (Zen 5).
+# R's default Makeconf uses -march=native, which bakes in the *build* node's ISA
+# and faults with SIGILL if the job later lands on an older node.
+# x86-64-v3 (AVX2/FMA/BMI2) is supported by Zen 2 onward, so it is safe on all three.
+CXXFLAGS = -O2 -ftree-vectorize -march=x86-64-v3 -mtune=generic -fno-math-errno
+CXX11FLAGS = -O2 -ftree-vectorize -march=x86-64-v3 -mtune=generic -fno-math-errno
+CXX14FLAGS = -O2 -ftree-vectorize -march=x86-64-v3 -mtune=generic -fno-math-errno
+CXX17FLAGS = -O2 -ftree-vectorize -march=x86-64-v3 -mtune=generic -fno-math-errno
+CFLAGS = -O2 -ftree-vectorize -march=x86-64-v3 -mtune=generic -fno-math-errno

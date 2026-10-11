@@ -1,0 +1,31 @@
+# data and large outputs
+*.h5ad
+*.h5
+*.rds
+*.RData
+*.loom
+*.mtx*
+*.fastq*
+*.fq*
+*.bam
+*.bai
+*.zarr/
+*.pkl
+*.npz
+*.csv
+*.tsv
+*.rds
+Data/
+outputs/
+Results/
+# cluster logs
+slurm-*.out
+*.out
+*.err
+*.log
+# caches and secrets
+__pycache__/
+.ipynb_checkpoints/
+.Rhistory
+.Rproj.user/
+.env
