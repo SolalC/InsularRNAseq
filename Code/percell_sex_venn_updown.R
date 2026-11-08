@@ -50,7 +50,7 @@ gp <- ggplot() +
                          "One circle only does not imply a sex-specific effect: each sex has half the nuclei.")) +
   theme_void(base_size = 8) +
   theme(strip.text = element_text(size = 7, margin = margin(2, 0, 2, 0)), plot.subtitle = element_text(size = 6.5))
-ggsave(file.path(DEG_DIR, "sex_venn_F_vs_M_updown.pdf"), gp, width = 12,
+ggsave(file.path(DEG_DIR, "sex_venn_F_vs_M_updown.jpeg"), gp, width = 12, dpi = 300, bg = "white",
        height = 1.2 + 2.6 * ceiling(2 * uniqueN(vn$annot) / 4), limitsize = FALSE)
 print(dcast(cnt[, .(annot, dir, region = c("F only", "both", "M only")[match(x, c(-1.05, 0, 1.05))], n)],
             annot + dir ~ region, value.var = "n"))
