@@ -4,25 +4,45 @@
 # Hit:     p_bonferroni < 0.05 and |avg_log2FC| > 0.5 in DEG_percell_HFDvsSD_<celltype>.csv,
 #          used for every plot and for the enrichment.
 # Genes:   heatmaps show the HEAT_MAX hits with the lowest p_val.
-# Plot 1   animals: as in pseudobulk_deg_seurat_diet.R. Counts summed per mouse
-#          (AggregateExpression), log2(CPM + 1), z-scored per gene across the mice; an
-#          extra column at the right of each diet shows that diet's mean z.
-# Plot 2   cells:   all nuclei, Seurat DoHeatmap; ScaleData z-scores of RNA `data` across the
-#          cell type's nuclei, colour clipped at +/- Z_CLIP; columns grouped by mouse.
+# Plot 1   animals: counts summed per mouse (AggregateExpression), log2(CPM + 1), then
+#          z-scored per gene against the SD (standard diet) mice:
+#            z = (x - mean of SD mice) / sd of SD mice
+#          so SD mice scatter around 0 with unit spread and an HFD mouse at z = 2 lies two
+#          SD-group standard deviations from the SD mean. Colour clipped at +/- ZSD_CLIP.
+#          An extra column at the right of each diet shows that diet's mean.
+# Plot 1b  animals, log2FC copy (sanity check of plot 1): same matrix, numerator only,
+#            log2FC = x - mean of SD mice   (log2 CPM, so a log2 fold change vs the SD mean)
+#          Same rows, same order. Plots 1 and 1b differ per gene only by the factor
+#          1 / sd(SD mice), so every row has the same sign pattern in both. Row labels give
+#          the per-cell avg_log2FC; the HFD average column should agree with it in sign and
+#          roughly in size (not exactly: avg_log2FC is a log of means over nuclei, this is a
+#          mean of logs over mice).
+# Plot 2   cells:   all nuclei, Seurat DoHeatmap; RNA `data` z-scored per gene against the
+#          cell type's SD nuclei (mean and sd of SD nuclei), colour clipped at +/- Z_CLIP;
+#          columns grouped by mouse.
 # Both:    columns grouped by diet then mouse; rows in the same order (clustered on the
 #          animal matrix), so the two plots can be read side by side.
 # Plot 3   volcano: every tested gene, avg_log2FC vs -log10 per-cell p_val. Hits
 #          coloured; ringed if also pseudobulk FDR < 0.05.
 #          Wilcoxon p-values underflow to 0 for large cell types; these are drawn at
 #          the smallest non-zero p as triangles.
-# Output:  in DEG_DIR, one page per cell type in
-#          heatmap_percell_animals.pdf and heatmap_percell_cells.pdf, and a single
+# Output:  in DEG_DIR, one page per cell type in heatmap_percell_animals_zSD.pdf,
+#          heatmap_percell_animals_log2FC.pdf and heatmap_percell_cells_zSD.pdf, and a single
 #          volcano_percell_all.jpeg faceted by cell type.
 # Plot 4   sex: F vs M log2FC of each pooled hit (sexsplit tables), one facet per cell type,
 #          y = x drawn; points off the diagonal respond differently by sex.
 # Plot 5   sex: interaction plots of the SEX_TOP hits per cell type with the largest
 #          |F - M| log2FC: per-mouse means by diet, one line per sex.
 #          Output: sex_log2FC_F_vs_M.jpeg, sex_interaction_tophits.pdf (one page per type).
+# Plot 6   sex: Venn diagram per cell type of female vs male DEG. Sex DEG = within-sex
+#          F_/M_p_bonferroni < BONF_CUT and |F_/M_avg_log2FC| > LFC_CUT in the sexsplit
+#          table. Caveats, all from the DEG script's design:
+#          (a) only pooled hits were tested within sex, so the universe is the pooled hits;
+#              a gene changed in one sex only but missed by the pooled test is absent;
+#          (b) within-sex Bonferroni is over the cell type's pooled hits, not all genes;
+#          (c) each sex has half the nuclei, so lower power: a gene in one circle only is
+#              not evidence of a sex-specific effect (see plot 4 and the interaction FDR).
+#          Output: sex_venn_F_vs_M.jpeg (one facet per cell type), sex_venn_membership.csv.
 # Then     enrichment: gprofiler2::gost, KEGG and WikiPathways (section at the end).
 # Usage:   Rscript percell_deg_plots.R [all | excitatory | inhibitory]
 #          Same argument as percell_deg_diet_sexfollowup.R; reads and writes that run's
@@ -54,6 +74,7 @@ BONF_CUT        <- 0.05
 LFC_CUT         <- 0.5   # |avg_log2FC| a hit must exceed (log2, so 1.41-fold)
 HEAT_MAX        <- 50    # at most this many genes, so labels stay readable
 Z_CLIP          <- 2.5   # colour limit for the cell heatmap (DoHeatmap's default); single-nucleus z is heavy-tailed
+ZSD_CLIP        <- 4     # colour limit for the animal z vs SD heatmap; sd of 6 SD mice can be small, so HFD z can be large
 VOLC_LABEL      <- 8     # hits labelled per cell type facet (lowest p_val)
 SEX_TOP         <- 9     # genes per cell type in the sex interaction plots
 SEX_LABEL       <- 6     # genes labelled per facet in the F vs M scatter
@@ -124,8 +145,46 @@ volcano_data <- function(all, ct) {
 
 row_labels <- function(r) setNames(sprintf("%s (p_bonf = %.1e)", r$gene, r$p_bonferroni), r$gene)
 
+# z-score of each row (gene) against the reference columns `ref` (SD mice or SD nuclei):
+# (x - mean(x[ref])) / sd(x[ref]). A gene with sd = 0 in the reference (e.g. undetected in
+# every SD sample) has no defined z; it is set to 0 where x equals the reference mean and to
+# +/- clip elsewhere, so it shows as saturated rather than disappearing.
+ref_z <- function(m, ref, clip) {
+  mu <- rowMeans(m[, ref, drop = FALSE])
+  s  <- apply(m[, ref, drop = FALSE], 1, sd)
+  dv <- m - mu
+  z  <- dv / s
+  bad <- s == 0 | is.na(s)
+  if (any(bad)) z[bad, ] <- sign(dv[bad, , drop = FALSE]) * clip
+  z
+}
+
+# Animal heatmap from a gene x mouse matrix: diet facets, one "average" column per diet
+# (mean of that diet's mice), rows in gene_order, symmetric colour scale clipped at +/- lim.
+animal_heatmap <- function(m, gene_order, labels, lim, fill_name, title) {
+  d <- as.data.table(as.table(m))
+  setnames(d, c("gene", "sample", "value"))
+  d <- merge(d, mice, by = "sample")
+  avg <- d[, .(value = mean(value)), by = .(gene, diet)][, sample := paste(diet, "average")]
+  d <- rbind(d[, .(gene, sample, value, diet)], avg[, .(gene, sample, value, diet)])
+  col_levels <- unlist(lapply(levels(mice$diet), function(dt)
+    c(mice[diet == dt, sample], paste(dt, "average"))))
+  d[, `:=`(sample = factor(sample, levels = col_levels), gene = factor(gene, levels = gene_order))]
+  sep <- mice[, .(x = .N + 0.5), by = diet]             # white line before each average column
+  ggplot(d, aes(sample, gene, fill = value)) +
+    geom_tile() +
+    geom_vline(data = sep, aes(xintercept = x), colour = "white", linewidth = 1.2) +
+    facet_grid(~ diet, scales = "free_x", space = "free_x") +
+    scale_y_discrete(labels = labels) +
+    scale_fill_gradient2(low = "#2166ac", mid = "white", high = "#b2182b",
+                         limits = c(-lim, lim), oob = scales::squish, name = fill_name) +
+    labs(x = NULL, y = NULL, title = title) +
+    heat_theme + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+                       strip.text.x = element_text(angle = 0))
+}
+
 ## ---- per cell type -----------------------------------------------------------------
-volc <- list(); heat_animals <- list(); heat_cells <- list()
+volc <- list(); heat_animals <- list(); heat_animals_lfc <- list(); heat_cells <- list()
 for (ct in setdiff(sort(unique(obj$annot)), DROP_TYPES)) {
   f <- file.path(DEG_DIR, paste0("DEG_percell_HFDvsSD_", safe(ct), ".csv"))
   if (!file.exists(f)) { msg(ct, ": no DEG table, skipped"); next }
@@ -137,51 +196,43 @@ for (ct in setdiff(sort(unique(obj$annot)), DROP_TYPES)) {
   g <- r$gene
   msg(ct, ": ", length(g), " genes")
 
-  ## animals: log2 CPM of the per-mouse pseudobulk, z-scored per gene
+  ## animals: log2 CPM of the per-mouse pseudobulk, referenced to the SD mice
   lib <- pb_md[annot == gsub("_", "-", ct)]
   lib[, sample := gsub("-", "_", sample)]
   cnt <- as.matrix(pb_cnt[, lib$library, drop = FALSE])
-  za  <- log2(t(t(cnt) / colSums(cnt)) * 1e6 + 1)[g, , drop = FALSE]
-  colnames(za) <- lib$sample
-  za  <- t(scale(t(za)))
-  za[is.na(za)] <- 0                                   # gene constant across mice
-  gene_order <- rownames(za)[hclust(dist(za))$order]
+  lc  <- log2(t(t(cnt) / colSums(cnt)) * 1e6 + 1)[g, , drop = FALSE]
+  colnames(lc) <- lib$sample
+  is_sd <- colnames(lc) %in% mice[diet == "SD", sample]
+  stopifnot(sum(is_sd) >= 2, sum(!is_sd) >= 1)
+  zsd <- ref_z(lc, is_sd, ZSD_CLIP)                    # z vs SD mice (plot 1)
+  lfc <- lc - rowMeans(lc[, is_sd, drop = FALSE])      # log2FC vs SD mean (plot 1b)
+  gene_order <- rownames(zsd)[hclust(dist(pmin(pmax(zsd, -ZSD_CLIP), ZSD_CLIP)))$order]
 
-  d <- as.data.table(as.table(za))
-  setnames(d, c("gene", "sample", "z"))
-  d <- merge(d, mice, by = "sample")
-  # Group average: mean z of the diet's mice, one extra column at the right of each diet
-  avg <- d[, .(z = mean(z)), by = .(gene, diet)][, sample := paste(diet, "average")]
-  d <- rbind(d[, .(gene, sample, z, diet)], avg[, .(gene, sample, z, diet)])
-  col_levels <- unlist(lapply(levels(mice$diet), function(dt)
-    c(mice[diet == dt, sample], paste(dt, "average"))))
-  d[, `:=`(sample = factor(sample, levels = col_levels), gene = factor(gene, levels = gene_order))]
-  sep <- mice[, .(x = .N + 0.5), by = diet]             # white line before each average column
-  lim <- max(abs(d$z))
-  gp <- ggplot(d, aes(sample, gene, fill = z)) +
-    geom_tile() +
-    geom_vline(data = sep, aes(xintercept = x), colour = "white", linewidth = 1.2) +
-    facet_grid(~ diet, scales = "free_x", space = "free_x") +
-    scale_y_discrete(labels = row_labels(r)) +
-    scale_fill_gradient2(low = "#2166ac", mid = "white", high = "#b2182b",
-                         limits = c(-lim, lim), name = "z-score\nlog2 CPM") +
-    labs(x = NULL, y = NULL,
-         title = paste0(ct, ": HFD vs SD, per mouse, ", length(g), " per-cell hits")) +
-    heat_theme + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
-                       strip.text.x = element_text(angle = 0))
-  heat_animals[[ct]] <- gp
+  heat_animals[[ct]] <- animal_heatmap(
+    zsd, gene_order, row_labels(r), lim = ZSD_CLIP,
+    fill_name = paste0("z vs SD mice\n(x - mean SD) / sd SD\nlog2 CPM,\nclipped at +/-", ZSD_CLIP),
+    title = paste0(ct, ": HFD vs SD, per mouse, ", length(g), " per-cell hits, z-score vs SD"))
+  lfc_lim <- max(abs(lfc), 0.1)
+  heat_animals_lfc[[ct]] <- animal_heatmap(
+    lfc, gene_order,
+    setNames(sprintf("%s (per-cell log2FC = %+.2f)", r$gene, r$avg_log2FC), r$gene), lim = lfc_lim,
+    fill_name = "log2FC vs SD mean\nlog2 CPM",
+    title = paste0(ct, ": HFD vs SD, per mouse, ", length(g), " per-cell hits, log2FC vs SD (check of z plot)"))
 
-  ## cells: every nucleus of the cell type, Seurat's DoHeatmap on ScaleData z-scores
-  # (scaled across this cell type's nuclei). Groups = mice, ordered by diet then sex.
+  ## cells: every nucleus of the cell type, DoHeatmap on RNA `data` z-scored against the
+  # cell type's SD nuclei (written to scale.data). Groups = mice, ordered by diet then sex.
   sc <- subset(obj, cells = colnames(obj)[obj$annot == ct], features = g)
   sc$mouse <- factor(sc$sample, levels = MOUSE_ORDER)
-  sc <- ScaleData(sc, features = g, verbose = FALSE)
+  dat <- as.matrix(LayerData(sc, assay = "RNA", layer = "data")[g, , drop = FALSE])
+  LayerData(sc, assay = "RNA", layer = "scale.data") <- ref_z(dat, as.character(sc$diet) == "SD", Z_CLIP)
+  rm(dat)
   gp <- DoHeatmap(sc, features = rev(gene_order), group.by = "mouse", slot = "scale.data",
                   disp.min = -Z_CLIP, disp.max = Z_CLIP, size = 2.5, angle = 90,
                   raster = TRUE) +
     scale_y_discrete(labels = row_labels(r)) +
     labs(title = paste0(ct, ": HFD vs SD, all ", ncol(sc), " nuclei, ", length(g), " per-cell hits"),
-         subtitle = "columns grouped by mouse: SD (F, M) then HFD (F, M)") +
+         subtitle = paste0("z = (x - mean of SD nuclei) / sd of SD nuclei, RNA data, clipped at +/-", Z_CLIP,
+                           "; columns grouped by mouse: SD (F, M) then HFD (F, M)")) +
     theme(axis.text.y = element_text(size = 6), legend.position = "right")
   rm(sc)
   heat_cells[[ct]] <- gp
@@ -195,8 +246,10 @@ write_pdf <- function(plots, file, width) {
   for (gp in plots) print(gp)
   dev.off()
 }
-write_pdf(heat_animals, file.path(DEG_DIR, "heatmap_percell_animals.pdf"), width = 3 + 0.3 * length(MOUSE_ORDER) + 2)
-write_pdf(heat_cells,   file.path(DEG_DIR, "heatmap_percell_cells.pdf"),   width = 12)
+aw <- 3 + 0.3 * length(MOUSE_ORDER) + 2.5
+write_pdf(heat_animals,     file.path(DEG_DIR, "heatmap_percell_animals_zSD.pdf"),    width = aw)
+write_pdf(heat_animals_lfc, file.path(DEG_DIR, "heatmap_percell_animals_log2FC.pdf"), width = aw)
+write_pdf(heat_cells,       file.path(DEG_DIR, "heatmap_percell_cells_zSD.pdf"),      width = 12)
 
 ## ---- volcano: all cell types, one facet each ------------------------------------------
 if (!length(volc)) stop("no DEG_percell_HFDvsSD_*.csv in ", DEG_DIR, " -- run percell_deg_diet_sexfollowup.sh ", RUN, " first")
@@ -233,13 +286,15 @@ rm(obj, pb, pb_cnt); invisible(gc())
 # These compare effect sizes; they are not a test of the sex difference. The only test
 # here is the pseudobulk interaction, present if 9_pseudobulk_deg.R was run: its BH is
 # re-applied over the cell type's hits only (pbB_int_FDR_hits, computed by the DEG script).
-sx <- list(); mm_all <- list()
+sx <- list(); mm_all <- list(); venn <- list()
 for (ct in setdiff(sort(unique(names(volc))), DROP_TYPES)) {
   f  <- file.path(DEG_DIR, paste0("DEG_percell_sexsplit_", safe(ct), ".csv"))
   fm <- file.path(DEG_DIR, paste0("mouse_means_hits_", safe(ct), ".csv"))
   if (!file.exists(f)) next
   d <- fread(f)
   if (!all(c("F_avg_log2FC", "M_avg_log2FC") %in% names(d))) next
+  if (all(c("F_p_bonferroni", "M_p_bonferroni") %in% names(d)))   # every pooled hit, for the Venn
+    venn[[ct]] <- d[is_hit(d), .(annot = ct, gene, F_avg_log2FC, M_avg_log2FC, F_p_bonferroni, M_p_bonferroni)]
   d <- d[is_hit(d) & !is.na(F_avg_log2FC) & !is.na(M_avg_log2FC)]
   if (!nrow(d)) next
   d[, `:=`(annot = ct, sex_diff = M_avg_log2FC - F_avg_log2FC,
@@ -300,6 +355,58 @@ if (length(sx)) {
     dev.off()
   }
 } else msg("no sexsplit tables with hits; sex plots skipped")
+
+## ---- sex: Venn of female vs male DEG, one facet per cell type ------------------------
+# Universe = the cell type's pooled hits (the only genes tested within sex). Sex DEG uses the
+# same cut-offs as the pooled hits: within-sex p_bonferroni < BONF_CUT (Bonferroni over the
+# pooled hits) and |within-sex avg_log2FC| > LFC_CUT. A gene not tested in a sex (NA) counts
+# as not DEG in that sex. Counts under each region: up / down in HFD; in the overlap, genes
+# whose F and M log2FC have opposite signs are counted separately.
+if (length(venn)) {
+  vn <- rbindlist(venn)
+  vn[, `:=`(F_deg = !is.na(F_p_bonferroni) & F_p_bonferroni < BONF_CUT & abs(F_avg_log2FC) > LFC_CUT,
+            M_deg = !is.na(M_p_bonferroni) & M_p_bonferroni < BONF_CUT & abs(M_avg_log2FC) > LFC_CUT)]
+  vn[, region := fifelse(F_deg & M_deg, "both", fifelse(F_deg, "F only", fifelse(M_deg, "M only", "neither")))]
+  fwrite(vn[order(annot, region, gene)], file.path(DEG_DIR, "sex_venn_membership.csv"))
+
+  updown <- function(lfc) sprintf("%d up / %d down", sum(lfc > 0), sum(lfc < 0))
+  cnt <- vn[, {
+    fo <- region == "F only"; mo <- region == "M only"; bo <- region == "both"
+    opp <- bo & sign(F_avg_log2FC) != sign(M_avg_log2FC)
+    data.table(x = c(-1.05, 0, 1.05),
+               n = c(sum(fo), sum(bo), sum(mo)),
+               sub = c(updown(F_avg_log2FC[fo]),
+                       paste0(updown(F_avg_log2FC[bo & !opp]), if (any(opp)) sprintf("\n%d opposite sign", sum(opp)) else ""),
+                       updown(M_avg_log2FC[mo])),
+               n_hit = .N, n_neither = sum(region == "neither"))
+  }, by = annot]
+  strip <- cnt[, .(lab = sprintf("%s\n%d pooled hits; %d DEG in neither sex", annot[1], n_hit[1], n_neither[1])), by = annot]
+  cnt[, facet := factor(strip$lab[match(annot, strip$annot)], levels = strip[order(annot), lab])]
+
+  th <- seq(0, 2 * pi, length.out = 200)
+  circ <- rbind(data.table(sex = "F", x = -0.6 + cos(th), y = sin(th)),
+                data.table(sex = "M", x =  0.6 + cos(th), y = sin(th)))
+  gp <- ggplot() +
+    geom_polygon(data = circ, aes(x, y, fill = sex, group = sex), alpha = 0.25, colour = "grey30", linewidth = 0.3) +
+    geom_text(data = data.table(x = c(-1.2, 1.2), y = 1.2, lab = c("Female", "Male")),   # repeated in every facet
+              aes(x, y, label = lab), size = 3, fontface = "bold") +
+    geom_text(data = cnt, aes(x, 0.12, label = n), size = 4.5) +
+    geom_text(data = cnt, aes(x, -0.25, label = sub), size = 1.9, lineheight = 0.9) +
+    facet_wrap(~ facet, ncol = 4) +
+    scale_fill_manual(values = c(F = "#d95f02", M = "#1b9e77"), guide = "none") +
+    coord_equal(xlim = c(-1.7, 1.7), ylim = c(-1.1, 1.4)) +
+    labs(title = "HFD vs SD DEG within each sex, per cell type",
+         subtitle = paste0("Sex DEG: within-sex Wilcoxon p_bonferroni < ", BONF_CUT, " (Bonferroni over the cell type's pooled hits) ",
+                           "and |log2FC| > ", LFC_CUT, ".\nOnly pooled hits (p_bonferroni < ", BONF_CUT, " over all genes, |log2FC| > ",
+                           LFC_CUT, ") were tested within sex. One circle only does not imply a sex-specific effect: ",
+                           "each sex has half the nuclei.")) +
+    theme_void(base_size = 8) +
+    theme(strip.text = element_text(size = 7, margin = margin(2, 0, 2, 0)),
+          plot.subtitle = element_text(size = 6.5), plot.margin = margin(6, 6, 6, 6))
+  ggsave(file.path(DEG_DIR, "sex_venn_F_vs_M.jpeg"), gp,
+         width = 12, height = 1.2 + 2.6 * ceiling(uniqueN(vn$annot) / 4), dpi = 300, bg = "white",
+         limitsize = FALSE)
+} else msg("no sexsplit tables with F_/M_p_bonferroni; Venn skipped")
 
 ## ---- pathway enrichment -----------------------------------------------------------
 # Query:      per cell type, all hits (up and down together).
