@@ -79,8 +79,12 @@ VOLC_LABEL      <- 8     # hits labelled per cell type facet (lowest p_val)
 SEX_TOP         <- 9     # genes per cell type in the sex interaction plots
 SEX_LABEL       <- 6     # genes labelled per facet in the F vs M scatter
 SEED            <- 42
+MAKE_VOLCANO    <- FALSE # TRUE to write volcano_percell_all.jpeg
 DROP_TYPES  <- "Unidentified"   # `annot` levels left out of every analysis
 
+# jpeg() with the X11 bitmap type tries to open a display; on a compute node that inherited
+# DISPLAY from an `ssh -X` login, it can wait forever. Cairo needs no display.
+if (capabilities("cairo")) options(bitmapType = "cairo")
 safe <- function(x) gsub("[^A-Za-z0-9]+", "_", x)
 msg  <- function(...) cat(format(Sys.time(), "[%H:%M:%S] "), ..., "\n", sep = "")
 is_hit <- function(d) d$p_bonferroni < BONF_CUT & abs(d$avg_log2FC) > LFC_CUT
@@ -253,6 +257,7 @@ write_pdf(heat_cells,       file.path(DEG_DIR, "heatmap_percell_cells_zSD.pdf"),
 
 ## ---- volcano: all cell types, one facet each ------------------------------------------
 if (!length(volc)) stop("no DEG_percell_HFDvsSD_*.csv in ", DEG_DIR, " -- run percell_deg_diet_sexfollowup.sh ", RUN, " first")
+if (MAKE_VOLCANO) {
 msg("volcano: building")
 v <- rbindlist(volc)
 v[, cls := factor(cls, levels = c("up in HFD", "down in HFD", "n.s."))]
@@ -280,6 +285,7 @@ msg("volcano: writing jpeg")
 ggsave(file.path(DEG_DIR, "volcano_percell_all.jpeg"), gp,
        width = 14, height = 1 + 3.2 * ceiling(uniqueN(v$annot) / 4), dpi = 300, bg = "white",
        limitsize = FALSE)
+} else msg("volcano: skipped (MAKE_VOLCANO = FALSE)")
 
 rm(obj, pb, pb_cnt); invisible(gc())
 
