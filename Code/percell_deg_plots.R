@@ -28,12 +28,12 @@
 #          the smallest non-zero p as triangles.
 # Output:  in DEG_DIR, one page per cell type in heatmap_percell_animals_zSD.pdf,
 #          heatmap_percell_animals_log2FC.pdf and heatmap_percell_cells_zSD.pdf, and a single
-#          volcano_percell_all.jpeg faceted by cell type.
+#          volcano_percell_all.pdf faceted by cell type.
 # Plot 4   sex: F vs M log2FC of each pooled hit (sexsplit tables), one facet per cell type,
 #          y = x drawn; points off the diagonal respond differently by sex.
 # Plot 5   sex: interaction plots of the SEX_TOP hits per cell type with the largest
 #          |F - M| log2FC: per-mouse means by diet, one line per sex.
-#          Output: sex_log2FC_F_vs_M.jpeg, sex_interaction_tophits.pdf (one page per type).
+#          Output: sex_log2FC_F_vs_M.pdf, sex_interaction_tophits.pdf (one page per type).
 # Plot 6   sex: Venn diagram per cell type of female vs male DEG. Sex DEG = within-sex
 #          F_/M_p_bonferroni < BONF_CUT and |F_/M_avg_log2FC| > LFC_CUT in the sexsplit
 #          table. Caveats, all from the DEG script's design:
@@ -42,7 +42,7 @@
 #          (b) within-sex Bonferroni is over the cell type's pooled hits, not all genes;
 #          (c) each sex has half the nuclei, so lower power: a gene in one circle only is
 #              not evidence of a sex-specific effect (see plot 4 and the interaction FDR).
-#          Output: sex_venn_F_vs_M.jpeg (one facet per cell type), sex_venn_membership.csv.
+#          Output: sex_venn_F_vs_M.pdf (one facet per cell type), sex_venn_membership.csv.
 # Then     enrichment: gprofiler2::gost, KEGG and WikiPathways (section at the end).
 # Usage:   Rscript percell_deg_plots.R [all | excitatory | inhibitory]
 #          Same argument as percell_deg_diet_sexfollowup.R; reads and writes that run's
@@ -79,12 +79,11 @@ VOLC_LABEL      <- 8     # hits labelled per cell type facet (lowest p_val)
 SEX_TOP         <- 9     # genes per cell type in the sex interaction plots
 SEX_LABEL       <- 6     # genes labelled per facet in the F vs M scatter
 SEED            <- 42
-MAKE_VOLCANO    <- FALSE # TRUE to write volcano_percell_all.jpeg
+MAKE_VOLCANO    <- FALSE # TRUE to write volcano_percell_all.pdf
 DROP_TYPES  <- "Unidentified"   # `annot` levels left out of every analysis
 
-# jpeg() with the X11 bitmap type tries to open a display; on a compute node that inherited
-# DISPLAY from an `ssh -X` login, it can wait forever. Cairo needs no display.
-if (capabilities("cairo")) options(bitmapType = "cairo")
+# All single-page figures are written as PDF: on Bunya compute nodes the JPEG device hung
+# (no CPU use) at ggsave, while pdf() works.
 safe <- function(x) gsub("[^A-Za-z0-9]+", "_", x)
 msg  <- function(...) cat(format(Sys.time(), "[%H:%M:%S] "), ..., "\n", sep = "")
 is_hit <- function(d) d$p_bonferroni < BONF_CUT & abs(d$avg_log2FC) > LFC_CUT
@@ -281,9 +280,9 @@ gp <- gp + label_layer(lab) +
        subtitle = paste0("dashed: Bonferroni 0.05 and |log2FC| = ", LFC_CUT, "; ringed: pseudobulk FDR < 0.05; ",
                          "triangles: p = 0, drawn at the cell type's smallest non-zero p")) +
   theme_bw(base_size = 8) + theme(panel.grid.minor = element_blank(), legend.position = "bottom")
-msg("volcano: writing jpeg")
-ggsave(file.path(DEG_DIR, "volcano_percell_all.jpeg"), gp,
-       width = 14, height = 1 + 3.2 * ceiling(uniqueN(v$annot) / 4), dpi = 300, bg = "white",
+msg("volcano: writing pdf")
+ggsave(file.path(DEG_DIR, "volcano_percell_all.pdf"), gp,
+       width = 14, height = 1 + 3.2 * ceiling(uniqueN(v$annot) / 4), bg = "white",
        limitsize = FALSE)
 } else msg("volcano: skipped (MAKE_VOLCANO = FALSE)")
 
@@ -333,8 +332,8 @@ if (length(sx)) {
                            "r = Pearson correlation of F and M log2FC")) +
     theme_bw(base_size = 8) + theme(panel.grid.minor = element_blank())
   msg("sex: writing F vs M scatter")
-  ggsave(file.path(DEG_DIR, "sex_log2FC_F_vs_M.jpeg"), gp,
-         width = 13, height = 1.2 + 3.4 * ceiling(uniqueN(sx$annot) / 4), dpi = 300, bg = "white",
+  ggsave(file.path(DEG_DIR, "sex_log2FC_F_vs_M.pdf"), gp,
+         width = 13, height = 1.2 + 3.4 * ceiling(uniqueN(sx$annot) / 4), bg = "white",
          limitsize = FALSE)
 
   ## interaction plots, one PDF page per cell type
@@ -415,8 +414,8 @@ if (length(venn)) {
     theme(strip.text = element_text(size = 7, margin = margin(2, 0, 2, 0)),
           plot.subtitle = element_text(size = 6.5), plot.margin = margin(6, 6, 6, 6))
   msg("sex: writing Venn")
-  ggsave(file.path(DEG_DIR, "sex_venn_F_vs_M.jpeg"), gp,
-         width = 12, height = 1.2 + 2.6 * ceiling(uniqueN(vn$annot) / 4), dpi = 300, bg = "white",
+  ggsave(file.path(DEG_DIR, "sex_venn_F_vs_M.pdf"), gp,
+         width = 12, height = 1.2 + 2.6 * ceiling(uniqueN(vn$annot) / 4), bg = "white",
          limitsize = FALSE)
 } else msg("no sexsplit tables with F_/M_p_bonferroni; Venn skipped")
 
@@ -430,7 +429,7 @@ if (length(venn)) {
 # Plots:      one bar plot per source, x = -log10 p, y = pathway, facet by cell type;
 #             TOP_N terms per cell type.
 # Output:     in DEG_DIR/enrichment: enrichment_percell_all.csv,
-#             enrichment_percell_KEGG.jpeg, enrichment_percell_WP.jpeg.
+#             enrichment_percell_KEGG.pdf, enrichment_percell_WP.pdf.
 # gost queries the g:Profiler web server, so the node needs internet access. A failed
 # query is logged and skipped; the plots above are already saved by then.
 
@@ -491,9 +490,9 @@ for (src in names(SOURCES)) {
          subtitle = paste0("background: genes tested per cell type; top ", TOP_N,
                            " terms per cell type; terms > ", MAX_TERM, " genes dropped")) +
     theme_bw(base_size = 8) + theme(panel.grid.minor = element_blank(), panel.grid.major.y = element_blank())
-  ggsave(file.path(OUTDIR, paste0("enrichment_percell_", src, ".jpeg")), gp,
+  ggsave(file.path(OUTDIR, paste0("enrichment_percell_", src, ".pdf")), gp,
          width = 15, height = 1.5 + ceiling(n_ct / 3) * (0.6 + 0.16 * n_rows),
-         dpi = 300, bg = "white", limitsize = FALSE)
+         bg = "white", limitsize = FALSE)
 }
 
 writeLines(capture.output(sessionInfo()), file.path(OUTDIR, "sessionInfo.txt"))
