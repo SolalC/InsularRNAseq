@@ -253,6 +253,7 @@ write_pdf(heat_cells,       file.path(DEG_DIR, "heatmap_percell_cells_zSD.pdf"),
 
 ## ---- volcano: all cell types, one facet each ------------------------------------------
 if (!length(volc)) stop("no DEG_percell_HFDvsSD_*.csv in ", DEG_DIR, " -- run percell_deg_diet_sexfollowup.sh ", RUN, " first")
+msg("volcano: building")
 v <- rbindlist(volc)
 v[, cls := factor(cls, levels = c("up in HFD", "down in HFD", "n.s."))]
 setorder(v, -cls, -p_val)                                # n.s. drawn first, hits on top
@@ -275,6 +276,7 @@ gp <- gp + label_layer(lab) +
        subtitle = paste0("dashed: Bonferroni 0.05 and |log2FC| = ", LFC_CUT, "; ringed: pseudobulk FDR < 0.05; ",
                          "triangles: p = 0, drawn at the cell type's smallest non-zero p")) +
   theme_bw(base_size = 8) + theme(panel.grid.minor = element_blank(), legend.position = "bottom")
+msg("volcano: writing jpeg")
 ggsave(file.path(DEG_DIR, "volcano_percell_all.jpeg"), gp,
        width = 14, height = 1 + 3.2 * ceiling(uniqueN(v$annot) / 4), dpi = 300, bg = "white",
        limitsize = FALSE)
@@ -286,6 +288,7 @@ rm(obj, pb, pb_cnt); invisible(gc())
 # These compare effect sizes; they are not a test of the sex difference. The only test
 # here is the pseudobulk interaction, present if 9_pseudobulk_deg.R was run: its BH is
 # re-applied over the cell type's hits only (pbB_int_FDR_hits, computed by the DEG script).
+msg("sex: reading sexsplit tables")
 sx <- list(); mm_all <- list(); venn <- list()
 for (ct in setdiff(sort(unique(names(volc))), DROP_TYPES)) {
   f  <- file.path(DEG_DIR, paste0("DEG_percell_sexsplit_", safe(ct), ".csv"))
@@ -323,6 +326,7 @@ if (length(sx)) {
          subtitle = paste0("dashed: same effect in both sexes; labelled: largest |M - F|; ",
                            "r = Pearson correlation of F and M log2FC")) +
     theme_bw(base_size = 8) + theme(panel.grid.minor = element_blank())
+  msg("sex: writing F vs M scatter")
   ggsave(file.path(DEG_DIR, "sex_log2FC_F_vs_M.jpeg"), gp,
          width = 13, height = 1.2 + 3.4 * ceiling(uniqueN(sx$annot) / 4), dpi = 300, bg = "white",
          limitsize = FALSE)
@@ -331,6 +335,7 @@ if (length(sx)) {
   if (length(mm_all)) {
     mm_all <- rbindlist(mm_all, fill = TRUE)
     mm_all[, `:=`(diet = factor(diet, levels = c("SD", "HFD")), sex = factor(sex, levels = c("F", "M")))]
+    msg("sex: writing interaction plots")
     pdf(file.path(DEG_DIR, "sex_interaction_tophits.pdf"), width = 9, height = 7.5, onefile = TRUE)
     for (ct in sort(unique(mm_all$annot))) {
       top <- sx[annot == ct][order(-abs(sex_diff)), head(gene, SEX_TOP)]
@@ -403,6 +408,7 @@ if (length(venn)) {
     theme_void(base_size = 8) +
     theme(strip.text = element_text(size = 7, margin = margin(2, 0, 2, 0)),
           plot.subtitle = element_text(size = 6.5), plot.margin = margin(6, 6, 6, 6))
+  msg("sex: writing Venn")
   ggsave(file.path(DEG_DIR, "sex_venn_F_vs_M.jpeg"), gp,
          width = 12, height = 1.2 + 2.6 * ceiling(uniqueN(vn$annot) / 4), dpi = 300, bg = "white",
          limitsize = FALSE)
@@ -429,6 +435,7 @@ TOP_N    <- 15    # terms shown per cell type
 MAX_TERM <- 200   # drop very large terms (often generic: "Metabolic pathways")
 
 dir.create(OUTDIR, recursive = TRUE, showWarnings = FALSE)
+msg("enrichment: querying g:Profiler")
 
 files <- list.files(DEG_DIR, pattern = "^DEG_percell_HFDvsSD_.*\\.csv$", full.names = TRUE)
 files <- files[!basename(files) %in% paste0("DEG_percell_HFDvsSD_", safe(DROP_TYPES), ".csv")]
