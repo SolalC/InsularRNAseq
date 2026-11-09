@@ -22,11 +22,10 @@ msg  <- function(...) cat(format(Sys.time(), "[%H:%M:%S] "), ..., "\n", sep = ""
 #     "zSD"  : (x - mean of SD mice) / sd of SD mice   (SD mice centre on 0)
 #     "zall" : (x - mean of all mice) / sd of all mice (conventional row scaling)
 #     "log2" : log2(mean + 1) unscaled (colour then mostly shows gene abundance)
-# Output: DEG_DIR/heatmap_main/heatmap_main_<ct>.jpeg
+# Output: DEG_DIR/heatmap_main_all.pdf, one page per cell type
 MAIN_SCALE <- "zSD"
 MAIN_CLIP  <- 3      # colour limit for the z panels
-MAIN_DIR   <- file.path(DEG_DIR, "heatmap_main")
-dir.create(MAIN_DIR, showWarnings = FALSE, recursive = TRUE)
+main_pages <- list()
 
 main_files <- list.files(DEG_DIR, pattern = "^mouse_means_hits_.*\\.csv$", full.names = TRUE)
 main_files <- main_files[!basename(main_files) %in% paste0("mouse_means_hits_", safe(DROP_TYPES), ".csv")]
@@ -89,9 +88,15 @@ for (fm in main_files) {
   g <- gtable::gtable_add_rows(g, unit(14, "pt"), pos = 0)
   g <- gtable::gtable_add_grob(g, grid::textGrob(ttl, gp = grid::gpar(fontsize = 9, fontface = "bold")),
                                t = 1, l = 1, r = ncol(g))
-  jpeg(file.path(MAIN_DIR, paste0("heatmap_main_", ct_safe, ".jpeg")),
-       width = 3 + 0.3 * (nrow(mice_ord) + 1.6) + 1.5, height = 2 + 0.13 * nrow(hits),
-       units = "in", res = 300)
-  grid::grid.newpage(); grid::grid.draw(g); invisible(dev.off())
+  main_pages[[ct_safe]] <- list(g = g, n = nrow(hits), m = nrow(mice_ord))
   msg("main heatmap: ", ct_safe, " (", nrow(hits), " genes)")
 }
+# One PDF, one page per cell type; page size fits the largest cell type.
+if (length(main_pages)) {
+  pdf(file.path(DEG_DIR, "heatmap_main_all.pdf"),
+      width  = 3 + 0.3 * (max(sapply(main_pages, `[[`, "m")) + 1.6) + 1.5,
+      height = 2 + 0.13 * max(sapply(main_pages, `[[`, "n")), onefile = TRUE)
+  for (pgi in main_pages) { grid::grid.newpage(); grid::grid.draw(pgi$g) }
+  invisible(dev.off())
+  msg("main heatmap: wrote heatmap_main_all.pdf (", length(main_pages), " pages)")
+} else msg("main heatmap: no cell type with >= 2 hits")
