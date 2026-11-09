@@ -78,9 +78,6 @@ for (fm in main_files) {
     labs(title = "log2FC") + base_th + theme(axis.text.y = element_blank())
   pg <- lapply(list(panel_expr("SD", "SD", TRUE), p_lfc, panel_expr("HFD", "HFD", FALSE)),
                ggplotGrob)
-  # the SD panel's legend repeats the HFD one: blank it, keeping its space so rows align
-  gb <- grepl("^guide-box", pg[[1]]$layout$name)
-  pg[[1]]$grobs[gb] <- list(zeroGrob())
   n_col <- c(sum(mice_ord$diet == "SD"), 1.6, sum(mice_ord$diet == "HFD"))   # panel widths, in tiles
   for (i in 1:3) {
     pc <- unique(pg[[i]]$layout[grepl("^panel", pg[[i]]$layout$name), "l"])
