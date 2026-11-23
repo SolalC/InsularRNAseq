@@ -12,6 +12,8 @@
 # 2  heatmap_allDEG.pdf        every hit, one page per group: SD mean | per-cell log2FC | HFD mean.
 # 2b heatmap_log2FC_sex.pdf    every hit, one page per group: log2FC (HFD / SD) pooled, in
 #                              females and in males; red = higher in HFD.
+# 2c sex_log2FC_M_vs_F.<ext>  every hit, one panel per group: male log2FC (x) vs female log2FC
+#                              (y), y = x dashed; coloured by which sex calls it a DEG.
 # 3  sex_venn_F_vs_M.<ext>     female vs male within-sex DEG per group (2 circles), and
 #    sex_venn_F_vs_M_updown.<ext>  the same split by direction (4 ellipses).
 #    Sex DEG: within-sex p_bonferroni < BONF_CUT (Bonferroni over the group's pooled hits) and
@@ -203,6 +205,53 @@ if (length(lfc_pages)) {
   invisible(dev.off())
   msg("2b. log2FC heatmap written (", length(lfc_pages), " pages)")
 } else msg("2b. no sexsplit tables with F/M columns; log2FC heatmap skipped")
+
+## ---- 2c. male vs female log2FC scatter ----------------------------------------------
+# Points: the group's pooled hits. x = within-male avg_log2FC, y = within-female avg_log2FC
+# (HFD / SD). Dashed y = x: same effect in both sexes. Colour: DEG in both sexes, in one only,
+# or in neither (within-sex cut as in the Venns). Strip: n genes and Pearson r of F and M.
+# Labelled: the SEX_LABEL genes per group with the largest |M - F|.
+SEX_LABEL <- 8
+sc <- rbindlist(lapply(sx_hm, function(f) {
+  d <- fread(f)
+  if (!all(c("F_avg_log2FC", "M_avg_log2FC", "F_p_bonferroni", "M_p_bonferroni") %in% names(d))) return(NULL)
+  d <- d[is_hit(d) & !is.na(F_avg_log2FC) & !is.na(M_avg_log2FC)]
+  if (!nrow(d)) return(NULL)
+  d[, .(annot = pretty(group_of(f, "DEG_percell_sexsplit_")), gene, F_avg_log2FC, M_avg_log2FC,
+        F_deg = !is.na(F_p_bonferroni) & F_p_bonferroni < BONF_CUT & abs(F_avg_log2FC) > LFC_CUT,
+        M_deg = !is.na(M_p_bonferroni) & M_p_bonferroni < BONF_CUT & abs(M_avg_log2FC) > LFC_CUT)]
+}))
+if (nrow(sc)) {
+  sc[, cls := factor(fifelse(F_deg & M_deg, "DEG in both", fifelse(F_deg, "DEG in F only",
+                     fifelse(M_deg, "DEG in M only", "DEG in neither"))),
+                     levels = c("DEG in both", "DEG in F only", "DEG in M only", "DEG in neither"))]
+  strip <- sc[, .(lab = sprintf("%s\nn = %d, r = %.2f", annot[1], .N,
+                                if (.N > 2) cor(F_avg_log2FC, M_avg_log2FC) else NA_real_)), by = annot]
+  sc[, facet := factor(strip$lab[match(annot, strip$annot)], levels = strip[order(annot), lab])]
+  setorder(sc, -cls)                                     # "neither" drawn first
+  lab <- sc[order(-abs(M_avg_log2FC - F_avg_log2FC)), head(.SD, SEX_LABEL), by = annot]
+  lim <- max(abs(c(sc$F_avg_log2FC, sc$M_avg_log2FC)))
+  gp <- ggplot(sc, aes(M_avg_log2FC, F_avg_log2FC)) +
+    geom_hline(yintercept = 0, linewidth = 0.2, colour = "grey60") +
+    geom_vline(xintercept = 0, linewidth = 0.2, colour = "grey60") +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", linewidth = 0.3) +
+    geom_point(aes(colour = cls), size = 0.9, alpha = 0.8) +
+    (if (requireNamespace("ggrepel", quietly = TRUE))
+       ggrepel::geom_text_repel(data = lab, aes(label = gene), size = 2.2, max.overlaps = Inf,
+                                min.segment.length = 0, segment.size = 0.2)
+     else geom_text(data = lab, aes(label = gene), size = 2.2, vjust = -0.6)) +
+    facet_wrap(~ facet, ncol = 4) +
+    coord_equal(xlim = c(-lim, lim), ylim = c(-lim, lim)) +
+    scale_colour_manual(values = c("DEG in both" = "#6a3d9a", "DEG in F only" = "#d95f02",
+                                   "DEG in M only" = "#1b9e77", "DEG in neither" = "grey70"),
+                        drop = FALSE, name = NULL) +
+    labs(x = "log2FC HFD / SD, males", y = "log2FC HFD / SD, females") +
+    theme_bw(base_size = 8) + theme(panel.grid.minor = element_blank(), legend.position = "bottom")
+  ggsave(file.path(DEG_DIR, paste0("sex_log2FC_M_vs_F.", FIG_EXT)), gp, dpi = 300, bg = "white",
+         width = 3 * min(4, uniqueN(sc$annot)) + 0.5, height = 1 + 3.2 * ceiling(uniqueN(sc$annot) / 4),
+         limitsize = FALSE)
+  msg("2c. M vs F log2FC scatter written")
+} else msg("2c. no sexsplit tables with F/M log2FC; scatter skipped")
 
 ## ---- 3. sex Venn diagrams --------------------------------------------------------------
 sx_files <- list.files(DEG_DIR, pattern = "^DEG_percell_sexsplit_.*\\.csv$", full.names = TRUE)
