@@ -1,9 +1,11 @@
 # Per-cell DEG, HFD vs SD, with a sex-specific follow-up. Seurat-native.
 #
-# Usage:   Rscript percell_deg_diet_sexfollowup.R [all | excitatory | inhibitory]
-#   all          annotated object, groups = `annot`        -> .../all_celltypes
-#   excitatory   excitatory subset, groups = Azimuth        -> .../excitatory_subclasses
-#   inhibitory   inhibitory subset, groups = Azimuth        -> .../inhibitory_subclasses
+# Usage:   Rscript percell_deg_diet_sexfollowup.R [all | excitatory | excitatory_layer | inhibitory]
+#   all               annotated object, groups = `annot`          -> .../all_celltypes
+#   excitatory        excitatory subset, groups = Azimuth subclass -> .../excitatory_subclasses
+#   excitatory_layer  excitatory subset, Azimuth subclasses pooled by cortical layer
+#                     (LAYER_MAP below)                           -> .../excitatory_layers
+#   inhibitory        inhibitory subset, groups = Azimuth subclass -> .../inhibitory_subclasses
 #   For the subsets, `annot` is replaced by the per-nucleus Azimuth predicted.subclass,
 #   keeping only subclasses whose nuclei are modally the lineage's own predicted.class
 #   (as in pseudobulk_deg_seurat_diet.R and 10_3_deg.R).
@@ -34,22 +36,30 @@ PROJECT     <- "/scratch/user/uqschauq/Insular"   # where scripts 9 and 10_x wri
 args        <- commandArgs(trailingOnly = TRUE)
 RUN         <- if (length(args) >= 1 && nzchar(args[1])) tolower(args[1]) else "all"
 LINEAGE_CLASS <- c(excitatory = "Glutamatergic", inhibitory = "GABAergic")
-if (!RUN %in% c("all", names(LINEAGE_CLASS)))
-  stop("argument must be one of: all, ", paste(names(LINEAGE_CLASS), collapse = ", "))
+if (!RUN %in% c("all", names(LINEAGE_CLASS), "excitatory_layer"))
+  stop("argument must be one of: all, excitatory, excitatory_layer, inhibitory")
+LINEAGE     <- sub("_layer$", "", RUN)   # which subset object / Azimuth run to read
 AZIMUTH_RES <- 0.2    # resolution of the Azimuth predictions written by 10_2_azimuth.R
-SUBDIR      <- if (RUN == "all") "all_celltypes" else paste0(RUN, "_subclasses")
+SUBDIR      <- if (RUN == "all") "all_celltypes" else if (RUN == "excitatory_layer") "excitatory_layers" else
+                 paste0(RUN, "_subclasses")
+# excitatory_layer: Allen MOp glutamatergic subclass -> layer group. L4/5 IT is kept apart
+# (the anterior insula is largely agranular, so it is a small, mixed group); L5/6 NP goes
+# with L5 and L6 IT Car3 and L6b with L6. A subclass not listed stops the run.
+LAYER_MAP <- c("L2/3 IT" = "L2/3", "L4/5 IT" = "L4/5",
+               "L5 IT" = "L5", "L5 ET" = "L5", "L5/6 NP" = "L5",
+               "L6 IT" = "L6", "L6 IT Car3" = "L6", "L6 CT" = "L6", "L6b" = "L6")
 first_existing <- function(x) c(Filter(file.exists, x), x[1])[1]
 
 IN       <- if (RUN == "all") file.path(ROOT, "Data", "Seurat", "HFDseq_v2_annotated.rds") else
-              file.path(ROOT, "Data", "Seurat", sprintf("HFDseq_v2_sub_%s.rds", RUN))
+              file.path(ROOT, "Data", "Seurat", sprintf("HFDseq_v2_sub_%s.rds", LINEAGE))
 OUTDIR   <- file.path(ROOT, "Results", "percell_wilcox_diet", SUBDIR)
 PB_DIR   <- file.path(ROOT, "Results", "pseudobulk_seurat_diet", SUBDIR)
 # edgeR diet x sex interaction: 9_pseudobulk_deg.R (all) or 10_3_deg.R (subsets).
 PB_B_REL <- if (RUN == "all") file.path("9_pseudobulk_deg", "pseudobulk_de_all.csv.gz") else
-              file.path(sprintf("10_3_%s_deg", RUN), "pseudobulk_de_all.csv.gz")
+              file.path(sprintf("10_3_%s_deg", LINEAGE), "pseudobulk_de_all.csv.gz")
 PB_B_FILE <- first_existing(file.path(c(ROOT, PROJECT), "Results", PB_B_REL))
 PRED_FILE <- if (RUN == "all") NA_character_ else
-  first_existing(file.path(c(ROOT, PROJECT), "Results", sprintf("10_2_%s_azimuth", RUN),
+  first_existing(file.path(c(ROOT, PROJECT), "Results", sprintf("10_2_%s_azimuth", LINEAGE),
                            sprintf("azimuth_predictions_res%s.rds", AZIMUTH_RES)))
 TRANSGENES  <- c("EGFP", "tdTomato", "EBFP2", "AAV-shared")
 MIN_CELLS   <- 20     # nuclei each diet needs (within the subset) for a test to run
@@ -84,10 +94,16 @@ if (RUN != "all") {
   obj$annot <- as.character(pred$predicted.subclass[i])
   pc    <- as.character(pred$predicted.class[i])
   modal <- data.table(annot = obj$annot, pc = pc)[, .N, by = .(annot, pc)][order(-N)][, .SD[1], by = annot]
-  keep  <- modal[pc == LINEAGE_CLASS[[RUN]], annot]
-  msg("dropping ", sum(!obj$annot %in% keep), " nuclei outside ", LINEAGE_CLASS[[RUN]], " subclasses")
+  keep  <- modal[pc == LINEAGE_CLASS[[LINEAGE]], annot]
+  msg("dropping ", sum(!obj$annot %in% keep), " nuclei outside ", LINEAGE_CLASS[[LINEAGE]], " subclasses")
   obj <- subset(obj, cells = colnames(obj)[obj$annot %in% keep])
   rm(pred); invisible(gc())
+}
+if (RUN == "excitatory_layer") {
+  miss <- setdiff(unique(obj$annot), names(LAYER_MAP))
+  if (length(miss)) stop("subclass(es) not in LAYER_MAP: ", paste(miss, collapse = ", "))
+  print(table(subclass = obj$annot, layer = LAYER_MAP[obj$annot]))
+  obj$annot <- unname(LAYER_MAP[obj$annot])
 }
 stopifnot("annot" %in% names(obj@meta.data))
 obj$annot  <- as.character(obj$annot)
