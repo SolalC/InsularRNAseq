@@ -3,9 +3,9 @@
 #SBATCH --partition=general
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=200G
-#SBATCH --time=08:00:00
+#SBATCH --cpus-per-task=2
+#SBATCH --mem=40G
+#SBATCH --time=01:00:00
 #SBATCH --output=/scratch/user/uqschauq/Insular/Code/logs/neuron_deg_%j.out
 #SBATCH --error=/scratch/user/uqschauq/Insular/Code/logs/neuron_deg_%j.err
 
@@ -14,6 +14,10 @@
 # Default runs: excitatory_layer (excitatory nuclei pooled by layer) and inhibitory.
 # `sbatch neuron_deg_layers.sh excitatory_layer` runs one. Set SKIP_DEG=1 to redo only the
 # outputs from existing DEG tables (`sbatch --export=ALL,SKIP_DEG=1 neuron_deg_layers.sh`).
+# Resources from job 33304077/33305013: peak RSS 25 GB (excitatory object, the larger one);
+# excitatory DEG + outputs took 3 min, inhibitory under 20 min once writing to /scratch.
+# R and presto's Wilcoxon are single-threaded, so 2 cores is enough. Figures only:
+#   sbatch --mem=8G --time=00:15:00 --cpus-per-task=1 --export=ALL,SKIP_DEG=1 neuron_deg_layers.sh
 set -euo pipefail
 module purge
 module load r/4.4.2-heavy
