@@ -10,6 +10,8 @@
 #            object, Seurat's p_val_adj) and |avg_log2FC| > LFC_CUT.
 # 1  volcano_<run>.<ext>       every tested gene, one facet per group.
 # 2  heatmap_allDEG.pdf        every hit, one page per group: SD mice | per-cell log2FC | HFD mice.
+# 2b heatmap_log2FC_sex.pdf    every hit, one page per group: log2FC (HFD / SD) pooled, in
+#                              females and in males; red = higher in HFD.
 # 3  sex_venn_F_vs_M.<ext>     female vs male within-sex DEG per group (2 circles), and
 #    sex_venn_F_vs_M_updown.<ext>  the same split by direction (4 ellipses).
 #    Sex DEG: within-sex p_bonferroni < BONF_CUT (Bonferroni over the group's pooled hits) and
@@ -192,6 +194,60 @@ for (MAIN_SET in names(MAIN_FILE)) {
 }
 
 msg("2. heatmap written")
+
+## ---- 2b. log2FC heatmap: pooled | female | male --------------------------------------
+# Rows: every pooled hit, sorted by pooled avg_log2FC (most up at the top). Columns: per-cell
+# Wilcoxon avg_log2FC (HFD / SD) with sexes pooled, within females, within males (from
+# DEG_percell_sexsplit_<group>.csv). Red = higher in HFD, blue = lower. "*" = DEG in that
+# column: the pooled column holds hits only, so every row has one there; F / M use the
+# within-sex cut (p_bonferroni < BONF_CUT over the group's hits, |log2FC| > LFC_CUT).
+# Grey = not tested in that sex. One colour scale per page, symmetric, clipped at LFC_CLIP.
+LFC_CLIP <- 2
+sx_hm <- list.files(DEG_DIR, pattern = "^DEG_percell_sexsplit_.*\\.csv$", full.names = TRUE)
+sx_hm <- sx_hm[!basename(sx_hm) %in% paste0("DEG_percell_sexsplit_", safe(DROP_TYPES), ".csv")]
+lfc_pages <- list()
+for (f in sx_hm) {
+  ct <- group_of(f, "DEG_percell_sexsplit_")
+  d  <- fread(f)
+  if (!all(c("F_avg_log2FC", "M_avg_log2FC", "F_p_bonferroni", "M_p_bonferroni") %in% names(d))) next
+  d  <- d[is_hit(d)]
+  if (nrow(d) < 2) next
+  lv <- d[order(avg_log2FC), gene]
+  long <- rbind(
+    d[, .(gene, col = "Pooled", lfc = avg_log2FC, sig = TRUE)],
+    d[, .(gene, col = "Female", lfc = F_avg_log2FC,
+          sig = !is.na(F_p_bonferroni) & F_p_bonferroni < BONF_CUT & abs(F_avg_log2FC) > LFC_CUT)],
+    d[, .(gene, col = "Male",   lfc = M_avg_log2FC,
+          sig = !is.na(M_p_bonferroni) & M_p_bonferroni < BONF_CUT & abs(M_avg_log2FC) > LFC_CUT)])
+  long[, `:=`(gene = factor(gene, levels = lv), col = factor(col, levels = c("Pooled", "Female", "Male")))]
+  lab_ok <- nrow(d) <= MAIN_LABEL_MAX
+  n_sig  <- long[sig == TRUE, .N, by = col]
+  gp <- ggplot(long, aes(col, gene, fill = lfc)) +
+    geom_tile(colour = if (lab_ok) "white" else NA, linewidth = 0.2) +
+    (if (lab_ok) geom_text(data = long[sig == TRUE], aes(label = "*"), size = 2.6, vjust = 0.75)) +
+    scale_fill_gradient2(low = "#2166ac", mid = "white", high = "#b2182b", na.value = "grey80",
+                         limits = c(-LFC_CLIP, LFC_CLIP), oob = scales::squish,
+                         name = paste0("log2FC\nHFD / SD\n(clipped +/-", LFC_CLIP, ")")) +
+    scale_x_discrete(position = "top",
+                     labels = function(x) sprintf("%s\n(%d DEG)", x, n_sig$N[match(x, n_sig$col)])) +
+    labs(x = NULL, y = NULL,
+         title = sprintf("%s: log2FC HFD vs SD of the %d pooled hits", pretty(ct), nrow(d)),
+         subtitle = paste0("*: DEG in that column (F / M: within-sex p_bonferroni < ", BONF_CUT,
+                           " over the hits, |log2FC| > ", LFC_CUT, ")",
+                           if (lab_ok) "" else "; too many genes to label")) +
+    theme_minimal(base_size = 8) +
+    theme(panel.grid = element_blank(), axis.text.x.top = element_text(face = "bold"),
+          axis.text.y = if (lab_ok) element_text(size = 6) else element_blank(),
+          plot.subtitle = element_text(size = 6.5))
+  lfc_pages[[ct]] <- list(gp = gp, n = nrow(d))
+}
+if (length(lfc_pages)) {
+  pdf(file.path(DEG_DIR, "heatmap_log2FC_sex.pdf"), width = 5.5,
+      height = 2.2 + 0.13 * min(max(sapply(lfc_pages, `[[`, "n")), MAIN_LABEL_MAX), onefile = TRUE)
+  for (pg in lfc_pages) print(pg$gp)
+  invisible(dev.off())
+  msg("2b. log2FC heatmap written (", length(lfc_pages), " pages)")
+} else msg("2b. no sexsplit tables with F/M columns; log2FC heatmap skipped")
 
 ## ---- 3. sex Venn diagrams --------------------------------------------------------------
 sx_files <- list.files(DEG_DIR, pattern = "^DEG_percell_sexsplit_.*\\.csv$", full.names = TRUE)
