@@ -19,8 +19,12 @@ module purge
 module load r/4.4.2-heavy
 PROJ=/scratch/user/uqschauq/Insular
 export R_LIBS_USER=$HOME/R/x86_64-pc-linux-gnu-library/4.4
+# Write results to /scratch, not /QRISdata: jobs stalled (no CPU) while overwriting existing
+# files there. Copy the folder to QRISdata afterwards if you want it there.
+export PERCELL_OUT=${PERCELL_OUT:-$PROJ/Results/percell_wilcox_diet}
+mkdir -p "$PERCELL_OUT"
 [ $# -eq 0 ] && set -- excitatory_layer inhibitory
-echo "[$(date)] host=$(hostname) job=${SLURM_JOB_ID:-none} runs=$* skip_deg=${SKIP_DEG:-0}"
+echo "[$(date)] host=$(hostname) job=${SLURM_JOB_ID:-none} runs=$* skip_deg=${SKIP_DEG:-0} out=$PERCELL_OUT"
 for run in "$@"; do
   if [ "${SKIP_DEG:-0}" != "1" ]; then
     echo "[$(date)] ==== $run: DEG ===="
