@@ -196,19 +196,27 @@ for (ct in setdiff(sort(unique(obj$annot)), DROP_TYPES)) {
                       n_hits_up = r[gene %in% hits & avg_log2FC > 0, .N],
                       n_hits_pb_FDR05 = if (!is.null(pb)) r[gene %in% hits & pb_FDR < 0.05, .N] else NA_integer_)
   ## full table: every gene, pooled and within each sex, significant or not
-  # Same Wilcoxon as step 1 on all FEATURES with only the min.pct expression filter (no
-  # log2FC prefilter), sexes pooled ("all_"), females ("F_") and males ("M_"). p_bonferroni
-  # here is Seurat's p_val_adj (x all genes in the object) in every column, so all_ matches
-  # the pooled DEG table; the F_/M_ cut in DEG_percell_sexsplit_ (Bonferroni over the hits
-  # only) is not reused. pooled_hit marks the step-1 hits.
+  # Same tests and same numbers as the other tables, for more genes:
+  #   all_  sexes pooled, min.pct = MIN_PCT, no log2FC prefilter; identical to
+  #         DEG_percell_HFDvsSD_ for the genes that table has (p_bonferroni = Seurat's p_val_adj).
+  #   F_/M_ within sex, min.pct = 0, no prefilter, as in step 2. p_bonferroni is Bonferroni over
+  #         the cell type's pooled hits, exactly as in DEG_percell_sexsplit_; it is NA for genes
+  #         that are not pooled hits (that correction is only defined for the hits).
+  # pooled_hit marks the step-1 hits.
   if (FULL_TABLE) {
     full <- NULL
     sex_of <- obj$sex[match(cells, colnames(obj))]
     for (grp in c("all", "F", "M")) {
       cc <- if (grp == "all") cells else cells[sex_of == grp]
-      rf <- wilcox_diet(cc, FEATURES, MIN_PCT, 0)
+      rf <- wilcox_diet(cc, FEATURES, if (grp == "all") MIN_PCT else 0, 0)
       if (is.null(rf)) { msg("  full table, ", grp, ": skipped, < ", MIN_CELLS, " nuclei in a diet"); next }
-      rf <- rf[, .(gene, avg_log2FC, pct.1, pct.2, p_val, p_bonferroni = p_val_adj)]
+      if (grp == "all") {
+        rf <- rf[, .(gene, avg_log2FC, pct.1, pct.2, p_val, p_bonferroni = p_val_adj)]
+      } else {
+        rf <- rf[, .(gene, avg_log2FC, pct.1, pct.2, p_val)]
+        rf[, p_bonferroni := NA_real_]
+        rf[gene %in% hits, p_bonferroni := p.adjust(p_val, "bonferroni")]   # n = number of hits
+      }
       setnames(rf, names(rf)[-1], paste0(grp, "_", names(rf)[-1]))
       full <- if (is.null(full)) rf else merge(full, rf, by = "gene", all = TRUE)
     }
