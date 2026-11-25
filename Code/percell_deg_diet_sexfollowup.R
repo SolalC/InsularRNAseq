@@ -16,8 +16,8 @@
 # Step 2  Per sex: same test within F and within M, on the step-1 hits of that cell type only.
 # Joined:          pseudobulk DESeq2 (pseudobulk_deg_seurat_diet.R, sex ignored) and, if present,
 #                  the edgeR diet x sex interaction (Code/9_pseudobulk_deg.R, model B).
-# Full table:      every gene (min.pct filter only), pooled and within each sex, significant or
-#                  not: DEG_percell_full_<ct>.csv (FULL_TABLE).
+# Full table:      DEG_percell_full_<ct>.csv (FULL_TABLE): the pooled table (every gene tested)
+#                  with the per-sex columns of the sexsplit table added for every gene.
 # Added:           per-mouse means of the hits (mouse_means_hits_<ct>.csv, used by
 #                  percell_deg_plots.R).
 #
@@ -72,7 +72,7 @@ LOGFC_MIN   <- 0.1
 MAX_CELLS   <- Inf    # max.cells.per.ident; set e.g. 2000 to cap the cell-number effect on p
 BONF_CUT    <- 0.05
 LFC_CUT     <- 0.5    # |avg_log2FC| a hit must exceed (log2, so 1.41-fold)
-FULL_TABLE  <- TRUE   # also write DEG_percell_full_<ct>.csv: every gene, pooled + F + M
+FULL_TABLE  <- TRUE   # also write DEG_percell_full_<ct>.csv: pooled table + per-sex columns
 SEED        <- 42
 DROP_TYPES  <- "Unidentified"   # `annot` levels left out of every analysis
 
@@ -195,37 +195,36 @@ for (ct in setdiff(sort(unique(obj$annot)), DROP_TYPES)) {
                       n_hits = length(hits),
                       n_hits_up = r[gene %in% hits & avg_log2FC > 0, .N],
                       n_hits_pb_FDR05 = if (!is.null(pb)) r[gene %in% hits & pb_FDR < 0.05, .N] else NA_integer_)
-  ## full table: every gene, pooled and within each sex, significant or not
-  # Same tests and same numbers as the other tables, for more genes:
-  #   all_  sexes pooled, min.pct = MIN_PCT, no log2FC prefilter; identical to
-  #         DEG_percell_HFDvsSD_ for the genes that table has (p_bonferroni = Seurat's p_val_adj).
-  #   F_/M_ within sex, min.pct = 0, no prefilter, as in step 2. p_bonferroni is Bonferroni over
-  #         the cell type's pooled hits, exactly as in DEG_percell_sexsplit_; it is NA for genes
-  #         that are not pooled hits (that correction is only defined for the hits).
-  # pooled_hit marks the step-1 hits.
+  ## full table: DEG_percell_HFDvsSD_ with the per-sex columns of DEG_percell_sexsplit_ added
+  # Rows: exactly the genes of the pooled table (every gene the pooled test tested), with all of
+  # its columns. F_/M_: the step-2 within-sex test (min.pct = 0, no log2FC prefilter) on those
+  # genes, so for the hits every value equals DEG_percell_sexsplit_ and the Venn diagrams.
+  # F_/M_p_bonferroni: the same correction as step 2 and the Venns, p x (number of pooled hits),
+  # capped at 1, applied to every row so each gene has one. For non-hits it is that multiplier,
+  # not a family-wise correction over all genes. F_/M_FDR: BH over the hits, as in step 2; NA
+  # for non-hits. pbB_int_*: edgeR diet x sex interaction where available; pbB_int_FDR_hits over
+  # the hits only, as in the sexsplit table. pooled_hit marks the step-1 hits.
   if (FULL_TABLE) {
-    full <- NULL
+    full   <- copy(r)
+    n_hit  <- length(hits)
     sex_of <- obj$sex[match(cells, colnames(obj))]
-    for (grp in c("all", "F", "M")) {
-      cc <- if (grp == "all") cells else cells[sex_of == grp]
-      rf <- wilcox_diet(cc, FEATURES, if (grp == "all") MIN_PCT else 0, 0)
-      if (is.null(rf)) { msg("  full table, ", grp, ": skipped, < ", MIN_CELLS, " nuclei in a diet"); next }
-      if (grp == "all") {
-        rf <- rf[, .(gene, avg_log2FC, pct.1, pct.2, p_val, p_bonferroni = p_val_adj)]
-      } else {
-        rf <- rf[, .(gene, avg_log2FC, pct.1, pct.2, p_val)]
-        rf[, p_bonferroni := NA_real_]
-        rf[gene %in% hits, p_bonferroni := p.adjust(p_val, "bonferroni")]   # n = number of hits
-      }
-      setnames(rf, names(rf)[-1], paste0(grp, "_", names(rf)[-1]))
-      full <- if (is.null(full)) rf else merge(full, rf, by = "gene", all = TRUE)
+    for (sx in c("F", "M")) {
+      rs <- wilcox_diet(cells[sex_of == sx], full$gene, 0, 0)
+      if (is.null(rs)) { msg("  full table, ", sx, ": skipped, < ", MIN_CELLS, " nuclei in a diet"); next }
+      rs[, `:=`(p_bonferroni = if (n_hit) pmin(1, p_val * n_hit) else NA_real_, FDR = NA_real_)]
+      rs[gene %in% hits, FDR := p.adjust(p_val, "BH")]
+      rs <- rs[, .(gene, avg_log2FC, pct.1, pct.2, p_val, p_bonferroni, FDR)]
+      setnames(rs, names(rs)[-1], paste0(sx, "_", names(rs)[-1]))
+      full <- merge(full, rs, by = "gene", all.x = TRUE)
     }
-    if (!is.null(full)) {
-      full[, pooled_hit := gene %in% hits]
-      if ("all_p_val" %in% names(full)) setorder(full, all_p_val)
-      fwrite(full, file.path(OUTDIR, paste0("DEG_percell_full_", safe(ct), ".csv")))
-      msg("  full table: ", nrow(full), " genes")
+    if (!is.null(pbB)) {
+      full <- merge(full, pbB[annot == ct, !"annot"], by = "gene", all.x = TRUE)
+      full[gene %in% hits & !is.na(pbB_int_p), pbB_int_FDR_hits := p.adjust(pbB_int_p, "BH")]
     }
+    full[, pooled_hit := gene %in% hits]
+    setorder(full, p_val)
+    fwrite(full, file.path(OUTDIR, paste0("DEG_percell_full_", safe(ct), ".csv")))
+    msg("  full table: ", nrow(full), " genes, ", n_hit, " pooled hits")
   }
 
   if (!length(hits)) { summary[[ct]] <- s_row; next }
