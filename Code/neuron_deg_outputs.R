@@ -33,8 +33,8 @@ RUN      <- if (length(args) >= 1 && nzchar(args[1])) tolower(args[1]) else "exc
 SUBDIR   <- c(excitatory_layer = "excitatory_layers", inhibitory = "inhibitory_subclasses",
               excitatory = "excitatory_subclasses")[RUN]
 if (is.na(SUBDIR)) stop("argument must be one of: excitatory_layer, inhibitory, excitatory")
-# Same root as the DEG script: env PERCELL_OUT if set, else QRISdata.
-DEG_DIR  <- file.path(Sys.getenv("PERCELL_OUT", "/QRISdata/Q9732/scratch/Results/percell_wilcox_diet"), SUBDIR)
+# Same root as the DEG script: env PERCELL_OUT if set, else /scratch.
+DEG_DIR  <- file.path(Sys.getenv("PERCELL_OUT", "/scratch/user/uqschauq/Insular/Results/percell_wilcox_diet"), SUBDIR)
 FIG_EXT  <- "pdf"
 BONF_CUT <- 0.05
 LFC_CUT  <- 0.5

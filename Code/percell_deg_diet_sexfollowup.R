@@ -54,9 +54,9 @@ first_existing <- function(x) c(Filter(file.exists, x), x[1])[1]
 
 IN       <- if (RUN == "all") file.path(ROOT, "Data", "Seurat", "HFDseq_v2_annotated.rds") else
               file.path(ROOT, "Data", "Seurat", sprintf("HFDseq_v2_sub_%s.rds", LINEAGE))
-# Output root: env PERCELL_OUT if set (neuron_deg_layers.sh sets it to /scratch), else QRISdata.
-# Overwriting old files on /QRISdata stalled jobs (no CPU) several times; /scratch avoids it.
-OUTDIR   <- file.path(Sys.getenv("PERCELL_OUT", file.path(ROOT, "Results", "percell_wilcox_diet")), SUBDIR)
+# Output root: env PERCELL_OUT if set, else /scratch. Writing to /QRISdata stalled jobs (no CPU,
+# up to an hour per file) several times, so nothing is written there.
+OUTDIR   <- file.path(Sys.getenv("PERCELL_OUT", file.path(PROJECT, "Results", "percell_wilcox_diet")), SUBDIR)
 PB_DIR   <- file.path(ROOT, "Results", "pseudobulk_seurat_diet", SUBDIR)
 # edgeR diet x sex interaction: 9_pseudobulk_deg.R (all) or 10_3_deg.R (subsets).
 PB_B_REL <- if (RUN == "all") file.path("9_pseudobulk_deg", "pseudobulk_de_all.csv.gz") else
